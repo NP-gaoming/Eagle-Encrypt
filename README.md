@@ -7,12 +7,12 @@ Compilation language: golang
 Compilation: go build main.go
 
 ## 2. Run (run in command line mode) ##
-Since main.exe is an executable file, to prevent Trojan viruses, please confirm the md5 value of the file (e42f2bfcb90f8754f4c1308be3b2035c) before running.
+Since main.exe is an executable file, to prevent Trojan viruses, please confirm the md5 value of the file (b954e0282781e0d33a10f043e469a791) before running.
 
 **2.1 Encrypt with text**
-> main.exe enc --type=text --key=abcda1234f10568e src=abef1efadfafafdaafeaba
+> main.exe enc --type=text --key=abcda1234f10568e --src=abef1efadfafafdaafeaba
 
-> succ: ciphertext = 0000000bff4777f1da60ba66d651862f9c76b301d32a85a2
+> succ: ciphertext = 0000000b73093244b9e26f99ba323efeac714e21f2d0c3366335f98f43b1510bf73962d8
 
 Note: type has two modes, --type=text or --type=file. --type=text means it encrypt or decrypt with a given text, --key is the key text. --src is the plain text. All of the text is given in hex format.
 The output ciphertext is also expressed in hex format.
@@ -20,7 +20,7 @@ The output ciphertext is also expressed in hex format.
 Since the Eagle encryption algorithm will supplement the insufficient bits of the plaintext according to the length of the key, the first four bytes of the ciphertext (such as 0000000b) indicate the length of the plaintext, and the following is the official text of the ciphertext.
 
 **2.2 Decrypt with text** 
-> main.exe dec --type=text --key=abcda1234f10568e --src=0000000baa6767bbe5b18a8f302181eb8b42df7e9e70bb21
+> main.exe dec --type=text --key=abcda1234f10568e --src=0000000b73093244b9e26f99ba323efeac714e21f2d0c3366335f98f43b1510bf73962d8
 
 > succ: plaintext = abef1efadfafafdaafeaba
 
