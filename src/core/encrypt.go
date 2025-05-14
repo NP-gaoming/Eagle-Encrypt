@@ -4,8 +4,8 @@ import(
 	"fmt"
 )
 
-func Encrypt(key ,etype, src string) ([]byte, error) {
-	w1, w2, err := fromKeyToBytes(key)
+func Encrypt(key, etype, src string) ([]byte, error) {
+	w1, w2, w3, w4, err := fromKeyToBytes(key)
 	wlen := len(w1)
 	if err != nil {
 		fmt.Printf("err=%v\r\n", err)
@@ -29,93 +29,58 @@ func Encrypt(key ,etype, src string) ([]byte, error) {
 	}
 
 	// dlen := 4 + len(m) + len(w1)
-	dlen := 4 + len(m) + len(m)
+	//dlen := 4 + len(m) + len(m) + wlen
+	K := len(m) / wlen
+	dlen := 4 + 3 * len(m) + 2 * wlen
 	dst := make([]byte, dlen)
 	dst[0] = byte(ml / (256 * 256 * 256))
 	dst[1] = byte((ml / (256 * 256)) % 256)
 	dst[2] = byte((ml / (256)) % (256 * 256))
 	dst[3] = byte(ml % 256)
 
-	// generate initial state
-	st, err := genState(wlen)
+	// generate random numbers
+	rs, err := genState(2 * len(m) + wlen)
 	if err != nil {
 		fmt.Printf("err=%v\r\n", err)
 		return nil, err
 	}
 
-	// generate middle states
-	sm, err := genState(len(m) - wlen)
+	// generate random r1
+	_r1, err := genState(wlen)
 	if err != nil {
 		fmt.Printf("err=%v\r\n", err)
 		return nil, err
 	}
 
 	// encrypt the first stage
-	for i := 0; i < len(m); i++ {
-		if st[wlen - 1] % 2 == 0 {
-			dst[4 + i] = dst[4 + i] ^ (0 << 7)
-		} else {
-			dst[4 + i] = dst[4 + i] ^ (1 << 7)
+	for i := 0; i < K; i++ {
+		mi, err := eagleDecode(rs[(2 * i) * wlen: (2 * i) * wlen + wlen], w1, w2)
+		if err != nil {
+			return nil, err
 		}
-		for j := byte(0); j < byte(8); j++ {
-			if m[i] & (1 << (7 - j)) == byte(0) {
-				rs := left(st, wlen)
-				rsx := xor(st, rs, wlen)
-				st = xor(w1, rsx, wlen)
-			} else {
-				rs := left(st, wlen)
-				rsx := xor(st, rs, wlen)
-				st = xor(w2, rsx, wlen)
-			}
-
-			if j < 7 {
-				if st[wlen - 1] % 2 == 0 {
-					dst[4 + i] = dst[4 + i] ^ (0 << (7 - j - 1))
-				} else {
-					dst[4 + i] = dst[4 + i] ^ (1 << (7 - j - 1))
-				}
-			}
-		}
-		if (i + 1) % wlen == 0 && i + 1 < len(m) { 
-			// st = xor(st, dst[4 + i + 1 - wlen:], wlen)
-			st = xor(st, sm[((i + 1) / wlen - 1) * wlen:], wlen)
+		for j := 0; j < wlen; j++ {
+			dst[4 + i * wlen + j] = mi[j] ^ m[i * wlen + j]
 		}
 	}
 
 	// encrypt the second stage
-	// st = xor(st, dst[4 + len(m) - wlen:], wlen)
-	for i := len(m); i < len(m) + len(sm); i++ {
-		if st[wlen - 1] % 2 == 0 {
-			dst[4 + i] = dst[4 + i] ^ (0 << 7)
-		} else {
-			dst[4 + i] = dst[4 + i] ^ (1 << 7)
+	for i := 0; i < 2 * K + 1; i++ {
+		mi, err := eagleDecode(rs[i * wlen: i * wlen + wlen], w3, w4)
+		if err != nil {
+			return nil, err
 		}
-		for j := byte(0); j < byte(8); j++ {
-			if sm[i - len(m)] & (1 << (7 - j)) == byte(0) {
-				rs := left(st, wlen)
-				rsx := xor(st, rs, wlen)
-				st = xor(w1, rsx, wlen)
-			} else {
-				rs := left(st, wlen)
-				rsx := xor(st, rs, wlen)
-				st = xor(w2, rsx, wlen)
-			}
-
-			if j < 7 {
-				if st[wlen - 1] % 2 == 0 {
-					dst[4 + i] = dst[4 + i] ^ (0 << (7 - j - 1))
-				} else {
-					dst[4 + i] = dst[4 + i] ^ (1 << (7 - j - 1))
-				}
-			}
+		_mi, err := eagleDecode(_r1, w3, w4)
+		if err != nil {
+			return nil, err
 		}
-		if (i + 1) % wlen == 0 { 
-			st = xor(st, dst[4 + i + 1 - wlen:], wlen)
+		for j := 0; j < wlen; j++ {
+			dst[4 + K * wlen + i * wlen + j] = mi[j] ^ _mi[j]
 		}
+		_r1 = mi
 	}
 
-	for k := 0; k < wlen; k++ {
-		dst[4 + len(m) + len(sm) + k] = st[k]
+	for j := 0; j < wlen; j++ {
+		dst[4 + 3 * K * wlen + wlen + j] = rs[2 * K * wlen + j]
 	}
 
 	return dst, nil
