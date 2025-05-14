@@ -5,7 +5,7 @@ import(
 )
 
 func Decrypt(key, dtype, src string) ([]byte, error) {
-	w1, w2, err := fromKeyToBytes(key)
+	w1, w2, w3, w4, err := fromKeyToBytes(key)
 	wlen := len(w1)
 	if err != nil {
 		fmt.Printf("err=%v\r\n", err)
@@ -36,68 +36,56 @@ func Decrypt(key, dtype, src string) ([]byte, error) {
 	dst := make([]byte, dlen)
 
 	// initial final state
-	st := make([]byte, wlen)
+	s1 := make([]byte, wlen)
 	for i := 0; i < wlen; i++ {
-		st[i] = c[len(c) - wlen + i]
+		s1[i] = c[len(c) - wlen + i]
 	}
 
-	sm := make([]byte, (len(c) - 4) / 2 - wlen)
+	K := ((len(c) - wlen - 4) / wlen) / 3
+	rs := make([]byte, 2 * K * wlen + wlen)
 
 	// decrypt the second stage
-	for i := len(c) - wlen - 1; i > len(c) - wlen - len(sm) - 1; i-- {
-		if (i - 4 + 1) % wlen == 0 {
-			st = xor(st, c[i - wlen + 1:], wlen)
-		}
-		for j := byte(0); j < byte(8); j++ {
-			// try w1
-			sr := xor(st, w1, wlen)
-			srx, gres := guess(sr, wlen)
-
-			var t byte
-			if gres {
-				t = byte(0)
-			} else {
-				sr = xor(st, w2, wlen)
-				srx, _ = guess(sr, wlen)
-				t = byte(1)
+	for j := 2 * K; j >= 0; j-- {
+		var mi []byte
+		if j == 2 * K {
+			mi, err = eagleDecode(s1, w3, w4)
+			if err != nil {
+				return nil, err
 			}
-
-			if ((srx[wlen - 1] << j) ^ c[i]) & (1 << j) == byte(0) {
-				st = srx
-			} else {
-				st = inverse(srx, wlen)
-			}
-			sm[i - 4 - len(sm) - wlen] = sm[i - 4 - len(sm) - wlen] ^ (t << j)
+		} else {
+			mi = s1
 		}
-	} 
+		_mi := make([]byte, wlen)
+		for t := 0; t < wlen; t++ {
+			_mi[t] = mi[t] ^ c[4 + K * wlen + j * wlen + t]
+		}
+		_ri, err := eagleEncode(_mi, w3, w4)
+		if err != nil {
+			return nil, err
+		}
+		for t := 0; t < wlen; t++ {
+			s1[t] = _ri[t]
+		}
+		if j < 2 * K {
+			ri, err := eagleEncode(mi, w3, w4)
+			if err != nil {
+				return nil, err
+			}
+			for t := 0; t < wlen; t++ {
+				rs[j * wlen + t] = ri[t]
+			}
+		}
+	}
 
 	// decrypt the first stage
-	for i := len(c) - len(sm) - wlen - 1; i > 3; i-- {
-		if (i - 4 + 1) % wlen == 0 && i - 4 - wlen + 1 < len(sm) {
-			st = xor(st, sm[i - 4 - wlen + 1:], wlen)
+	for i := 0; i < K; i++ {
+		mi, err := eagleDecode(rs[2 * i * wlen + wlen: 2 * i * wlen + wlen + wlen], w1, w2)
+		if err != nil {
+			return nil, err
 		}
-		for j := byte(0); j < byte(8); j++ {
-			// try w1
-			sr := xor(st, w1, wlen)
-			srx, gres := guess(sr, wlen)
-
-			var t byte
-			if gres {
-				t = byte(0)
-			} else {
-				sr = xor(st, w2, wlen)
-				srx, _ = guess(sr, wlen)
-				t = byte(1)
-			}
-
-			if ((srx[wlen - 1] << j) ^ c[i]) & (1 << j) == byte(0) {
-				st = srx
-			} else {
-				st = inverse(srx, wlen)
-			}
-
-			if i - 4 < dlen {
-				dst[i - 4] = dst[i - 4] ^ (t << j)
+		for t := 0; t < wlen; t++ {
+			if i * wlen + t < dlen {
+				dst[i * wlen + t] = mi[t] ^ c[4 + i * wlen + t]
 			}
 		}
 	}
