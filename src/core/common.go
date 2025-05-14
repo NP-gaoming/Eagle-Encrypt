@@ -8,7 +8,7 @@ import(
 )
 
 const (
-	MAX_KEY_LEN = 512 // 4096 bits
+	MAX_KEY_LEN = 1024 // 8192 bits
 )
 
 func convertFromHex(a byte) byte{
@@ -85,29 +85,42 @@ func convertToHex(a byte) byte {
 	return 0
 } 
 
-func fromKeyToBytes(key string) ([]byte, []byte, error) {
+func fromKeyToBytes(key string) ([]byte, []byte, []byte, []byte, error) {
 	bkey := []byte(key)
 	klen := len(bkey)
-	if klen == 0 || klen % 4 != 0 {
-		return nil, nil, errors.New("key is invalid.")
+	if klen == 0 || klen % 8 != 0 {
+		return nil, nil, nil, nil, errors.New("key is invalid.")
 	}
 	if klen / 2 > MAX_KEY_LEN {
-		return nil, nil, errors.New("key is too long")
+		return nil, nil, nil, nil, errors.New("key is too long")
 	}
-	w1 := make([]byte, klen / 4)
-	w2 := make([]byte, klen / 4)
-	for i := 0; i < klen / 4; i++ {
+	w1 := make([]byte, klen / 8)
+	w2 := make([]byte, klen / 8)
+	w3 := make([]byte, klen / 8)
+	w4 := make([]byte, klen / 8)
+	for i := 0; i < klen / 8; i++ {
 		a := convertFromHex(bkey[2 * i])
 		b := convertFromHex(bkey[2 * i + 1])
 		w1[i] = (a << 4) | b
 	}
-	for i := klen / 4; i < klen / 2; i++ {
+	for i := klen / 8; i < (klen / 8) * 2; i++ {
 		a := convertFromHex(bkey[2 * i])
 		b := convertFromHex(bkey[2 * i + 1])
-		w2[i - klen / 4] = (a << 4) | b
+		w2[i - klen / 8] = (a << 4) | b
 	}
+	for i := (klen / 8) * 2; i < (klen / 8) * 3; i++ {
+		a := convertFromHex(bkey[2 * i])
+		b := convertFromHex(bkey[2 * i + 1])
+		w3[i - (klen / 8) * 2] = (a << 4) | b
+	}
+	for i := (klen / 8) * 3; i < (klen / 8) * 4; i++ {
+		a := convertFromHex(bkey[2 * i])
+		b := convertFromHex(bkey[2 * i + 1])
+		w4[i - (klen / 8) * 3] = (a << 4) | b
+	}
+
 	num := 0
-	for i := 0; i < klen / 4; i++ {
+	for i := 0; i < klen / 8; i++ {
 		w := w1[i] ^ w2[i]
 		for j := byte(0); j < byte(8); j++ {
 			if (w & (byte(1 << (7 - j)))) != byte(0) {
@@ -116,9 +129,21 @@ func fromKeyToBytes(key string) ([]byte, []byte, error) {
 		} 
 	}
 	if num % 2 == 0 {
-		w2[klen / 4 - 1] = w2[klen / 4 - 1] ^ (0x01) 
+		w2[klen / 8 - 1] = w2[klen / 8 - 1] ^ (0x01) 
 	}
-	return w1, w2, nil
+	num = 0
+	for i := 0; i < klen / 8; i++ {
+		w := w3[i] ^ w4[i]
+		for j := byte(0); j < byte(8); j++ {
+			if (w & (byte(1 << (7 - j)))) != byte(0) {
+				num++
+			}
+		} 
+	}
+	if num % 2 == 0 {
+		w4[klen / 8 - 1] = w4[klen / 8 - 1] ^ (0x01) 
+	}
+	return w1, w2, w3, w4, nil
 }
 
 func fromTextToBytes(text string, fillflag bool, keylen int) ([]byte, int64, error) {
@@ -269,4 +294,59 @@ func ToHex(src []byte) string {
 		dst[2 * i + 1] = convertToHex((src[i] << 4) >> 4)
 	}
 	return string(dst)
+}
+
+func eagleEncode(m []byte, w1 []byte, w2 []byte) ([]byte, error) {
+	wlen := len(w1)
+	st, err := genState(wlen)
+	if err != nil {
+		return nil, err
+	}
+	for i := 0; i < len(m); i++ {
+		for j := byte(0); j < byte(8); j++ {
+			if m[i] & (1 << (7 - j)) == byte(0) {
+				rs := left(st, wlen)
+				rsx := xor(st, rs, wlen)
+				st = xor(w1, rsx, wlen)
+			} else {
+				rs := left(st, wlen)
+				rsx := xor(st, rs, wlen)
+				st = xor(w2, rsx, wlen)
+			}
+		}
+	}
+	return st, nil
+}
+
+func eagleDecode(s []byte, w1 []byte, w2 []byte) ([]byte, error) {
+	wlen := len(w1)
+	st := make([]byte, wlen)
+	sm := make([]byte, wlen)
+	for i := 0; i < wlen; i++ {
+		st[i] = s[i]
+	}
+	for i := wlen - 1; i >= 0; i-- {
+		for j := byte(0); j < byte(8); j++ {
+			// try w1
+			sr := xor(st, w1, wlen)
+			srx, gres := guess(sr, wlen)
+
+			var t byte
+			if gres {
+				t = byte(0)
+			} else {
+				sr = xor(st, w2, wlen)
+				srx, _ = guess(sr, wlen)
+				t = byte(1)
+			}
+
+			if (srx[wlen - 1] << j) & (1 << j) == byte(0) {
+				st = srx
+			} else {
+				st = inverse(srx, wlen)
+			}
+			sm[i] = sm[i] ^ (t << j)
+		}
+	}
+	return sm, nil
 }
